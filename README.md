@@ -8,3 +8,4 @@ Requirements:
 
 * `pip install tkinter csv sv_ttk pywinstyles selenium pandas`
 
+Microsoft Edge required
