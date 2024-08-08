@@ -14,8 +14,7 @@ import singleton
 import os
 
 
-
-
+#Check for accountdata.csv, creates if doesn't exist
 def check_file_exists(filename):
     # Get the directory of the current script
     script_dir = os.path.dirname(__file__)
@@ -25,22 +24,11 @@ def check_file_exists(filename):
     if os.path.isfile(file_path):
         print(f"The file '{filename}' exists.")
     else:
-        headers = ['username', 'cookie', 'description']
-        with open('accountdata.csv', mode='w', newline='') as file:
-            writer = csv.writer(file)
-            writer.writerow(headers)
+        superfile = open('accountdata.csv', 'x')
+        superfile.write('username,cookie,description')
+        superfile.close()
 
 check_file_exists('accountdata.csv')
-
-
-
-
-
-
-
-
-
-
 
 
 def addPlayer():
@@ -179,8 +167,6 @@ def set_description():
     accountlist.insert(peepeeindex, str(playerokok))
 
 
-
-
 desc_button = ttk.Button(button_frame, text='Set Description', command=set_description)
 desc_button.pack(padx=10,pady=10,side=tk.RIGHT)
 
@@ -190,6 +176,7 @@ def addaccount():
     with open('accountdata.csv','a') as dr:
         dr.write(accoun.csvstring())
     accountlist.insert(END, str(accoun))
+    accounter.append(accoun)
 
 addbutton = ttk.Button(button_frame, text='Add Account', command=addaccount)
 addbutton.pack(padx=20,pady=20,side=tk.LEFT)
@@ -199,7 +186,6 @@ def browseropenreal():
 
 browser_button = ttk.Button(button_frame, text='Open Browser', command=browseropenreal)
 browser_button.pack(padx=20,pady=20,side=tk.LEFT)
-
 
 
 def main():
