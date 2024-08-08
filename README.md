@@ -6,5 +6,5 @@ account data is locally stored as plaintext: passwords are safe, but cookies are
 
 Requirements:
 
-* `pip install tkinter, csv, sv_ttk, pywinstyles, selenium, pandas`
+* `pip install tkinter csv sv_ttk pywinstyles selenium pandas`
 
