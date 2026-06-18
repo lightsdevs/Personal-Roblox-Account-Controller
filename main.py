@@ -8,10 +8,15 @@ import pywinstyles, sys
 import player
 from player import Player
 from selenium import webdriver
+from selenium.webdriver.edge.service import Service as EdgeService
 from selenium.webdriver.support.wait import WebDriverWait
+from webdriver_manager.microsoft import EdgeChromiumDriverManager
+from selenium.common.exceptions import TimeoutException
 import pandas as pd
 import singleton
 import os
+import threading
+from tkinter import messagebox
 
 
 #Check for accountdata.csv, creates if doesn't exist
@@ -32,9 +37,24 @@ check_file_exists('accountdata.csv')
 
 
 def addPlayer():
-    driver = webdriver.Edge()
-    driver.get("https://roblox.com/login")
-    WebDriverWait(driver, 300).until(lambda d: d.current_url == "https://www.roblox.com/home")
+    driver = webdriver.Edge(service=EdgeService(EdgeChromiumDriverManager().install()))
+    driver.get("https://www.roblox.com/login")
+    try:
+        # Wait for the user to finish logging in.
+        # Success = URL starts with www.roblox.com but is NOT the login page.
+        # We also require the URL to have settled (not be a blank/redirect interim)
+        # so that we don't fire on the brief about:blank between navigations.
+        def _logged_in(d):
+            url = d.current_url
+            return (
+                url.startswith("https://www.roblox.com")
+                and "/login" not in url
+            )
+        WebDriverWait(driver, 300).until(_logged_in)
+    except TimeoutException:
+        driver.quit()
+        print("Login timed out")
+        return False
     cookies = driver.get_cookies()
     driver.quit()
     roblosecurity = None
@@ -42,7 +62,7 @@ def addPlayer():
         if cookie["name"] == ".ROBLOSECURITY":
             roblosecurity = cookie["value"]
             break
-    if roblosecurity == None:
+    if roblosecurity is None:
         print("Failed to get .ROBLOSECURITY cookie")
         return False
     return roblosecurity
@@ -172,11 +192,40 @@ desc_button.pack(padx=10,pady=10,side=tk.RIGHT)
 
 
 def addaccount():
-    accoun = accounts.Account(addPlayer())
-    with open('accountdata.csv','a') as dr:
-        dr.write(accoun.csvstring())
-    accountlist.insert(END, str(accoun))
-    accounter.append(accoun)
+    # Disable the button while login is in progress to prevent double-clicks
+    addbutton.config(state='disabled')
+
+    def _do_add():
+        try:
+            cookie = addPlayer()
+            if not cookie:
+                def _on_fail():
+                    messagebox.showerror("Add Account", "Failed to add account. Login timed out or .ROBLOSECURITY cookie could not be retrieved.")
+                    addbutton.config(state='normal')
+                root.after(0, _on_fail)
+                return
+            accoun = accounts.Account(cookie)
+            with open('accountdata.csv', 'a') as dr:
+                dr.write(accoun.csvstring())
+            # Update UI from the main thread
+            def _update_ui():
+                accountlist.insert(END, str(accoun))
+                accounter.append(accoun)
+                addbutton.config(state='normal')
+            root.after(0, _update_ui)
+        except Exception as e:
+            import traceback
+            err = traceback.format_exc()
+            print(err)
+            def _on_error():
+                messagebox.showerror(
+                    "Add Account – Unexpected Error",
+                    f"An error occurred while adding the account:\n\n{err}"
+                )
+                addbutton.config(state='normal')
+            root.after(0, _on_error)
+
+    threading.Thread(target=_do_add, daemon=True).start()
 
 addbutton = ttk.Button(button_frame, text='Add Account', command=addaccount)
 addbutton.pack(padx=20,pady=20,side=tk.LEFT)

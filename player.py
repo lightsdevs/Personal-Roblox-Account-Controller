@@ -4,6 +4,8 @@ import time
 import random
 from selenium import webdriver
 from selenium.webdriver.edge.options import Options
+from selenium.webdriver.edge.service import Service as EdgeService
+from webdriver_manager.microsoft import EdgeChromiumDriverManager
 
 URI_WWW = "https://www.roblox.com/"
 URI_AUTH = "https://auth.roblox.com/"
@@ -100,7 +102,8 @@ class Player:
     def openBrowser(self):
         options = Options()
         options.add_experimental_option("detach", True)
-        driver = webdriver.Edge(options=options)
+        service = EdgeService(EdgeChromiumDriverManager().install())
+        driver = webdriver.Edge(service=service, options=options)
         driver.get("https://roblox.com/home")
         driver.add_cookie({"name": ".ROBLOSECURITY", "value": self.roblosecurity, "domain": ".roblox.com"})
         driver.get("https://roblox.com/home")
