@@ -27,7 +27,7 @@ No Python, Selenium, or EdgeDriver is required for the Rust app.
 - **Add / sign in again** opens a fresh isolated Roblox login window. Sign in on
   Roblox's own page. The app validates the account before saving its session.
   Signing in again updates that username's session and preserves its description.
-- **Import old CSV** reads `accountdata.csv` from the original project folder
+- **Settings > Import old CSV** reads `accountdata.csv` from the original project folder
   (the repository location at build time), only after you choose this action.
   It imports usernames, sessions, and descriptions; duplicate usernames are
   skipped case-insensitively. It does not validate imported sessions immediately.
@@ -45,7 +45,11 @@ No Python, Selenium, or EdgeDriver is required for the Rust app.
   as the selected account (requires exactly one selected account). This replaces the Python app's standalone Edge
   window. It closes with the controller. Popups and non-HTTPS navigation are
   blocked; popup-based sign-in flows have not been verified.
-- **Light / dark** changes the current window's theme.
+- **Settings** contains the Roblox singleton toggle and **Dark mode** checkbox
+  (turn it off for light mode). Both preferences apply immediately and persist
+  across restarts in `settings.json` alongside the account store. Singleton is
+  enabled by default; enable it before launching multiple Roblox clients.
+  Changes may require closing existing Roblox clients.
 - The account list and controls appear side by side in wide windows and stack
   in narrow windows. Scroll vertically to reach controls in short windows.
 
@@ -81,8 +85,8 @@ sessions from other software already running as your Windows user.
 The port retains the Python app's account endpoint, CSRF and authentication-ticket
 exchange, place validation, username lookup, and Roblox launch protocol fields.
 It invokes the registered Roblox protocol directly through Windows, without a
-command shell. It holds `ROBLOX_singletonEvent` for the application lifetime,
-matching the existing mutex behavior. A separate mutex prevents concurrent Rust
+command shell. It holds `ROBLOX_singletonEvent` while singleton is enabled in
+Settings, releasing its handle when disabled. A separate mutex prevents concurrent Rust
 controllers from overwriting the account store. Start the controller before
 Roblox when testing multiple clients.
 

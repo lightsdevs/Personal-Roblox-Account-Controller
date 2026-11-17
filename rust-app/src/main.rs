@@ -1,6 +1,7 @@
 mod browser;
 mod platform;
 mod roblox;
+mod settings;
 mod store;
 use eframe::egui;
 use std::{
@@ -55,6 +56,9 @@ struct Controller {
     blocked: bool,
     login_pending: bool,
     confirm_import: bool,
+    show_settings: bool,
+    settings: settings::Settings,
+    roblox_mutex: Option<platform::MutexGuard>,
     path: PathBuf,
     sender: mpsc::Sender<ResultEvent>,
     receiver: mpsc::Receiver<ResultEvent>,
@@ -88,6 +92,9 @@ impl Controller {
             blocked: false,
             login_pending: false,
             confirm_import: false,
+            show_settings: false,
+            settings: settings::Settings::default(),
+            roblox_mutex: None,
             path,
             sender,
             receiver,
@@ -307,11 +314,16 @@ impl Controller {
         let path = self.path.clone();
         let mut accounts = self.accounts.clone();
         self.work(ctx, "Importing accounts...", move || {
-            let file = std::fs::File::open(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../accountdata.csv"))
-                .map_err(|_| "Could not open accountdata.csv in the original project folder.")?;
+            let file = std::fs::File::open(
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../accountdata.csv"),
+            )
+            .map_err(|_| "Could not open accountdata.csv in the original project folder.")?;
             let count = store::import_reader(file, &mut accounts)?;
             store::save(&path, &accounts)?;
-            Ok((Some(accounts), format!("Imported {count} accounts. Existing usernames skipped.")))
+            Ok((
+                Some(accounts),
+                format!("Imported {count} accounts. Existing usernames skipped."),
+            ))
         });
     }
     fn join(&mut self, ctx: &egui::Context, follow: bool) {
@@ -353,13 +365,10 @@ impl Controller {
             if ui.button("Add / sign in again").clicked() {
                 self.open_browser(ui.ctx(), true);
             }
-            if ui.button("Import old CSV").clicked() {
-                self.confirm_import = true;
-            }
         });
         ui.add_space(12.0);
         if self.accounts.is_empty() {
-            ui.label("No accounts yet. Add an account or import your existing CSV.");
+            ui.label("No accounts yet. Add an account or import your existing CSV in Settings.");
         }
         let mut selected = None;
         egui::Frame::group(ui.style())
@@ -455,47 +464,136 @@ impl Controller {
             }
         });
     }
+    fn apply_settings(
+        &mut self,
+        ctx: &egui::Context,
+        next: settings::Settings,
+    ) -> Result<(), String> {
+        let new_mutex = if next.singleton && self.roblox_mutex.is_none() {
+            Some(platform::MutexGuard::create(
+                "ROBLOX_singletonEvent",
+                false,
+            )?)
+        } else {
+            None
+        };
+        next.save(&self.path.with_file_name("settings.json"))?;
+        if !next.singleton {
+            self.roblox_mutex = None;
+        } else if new_mutex.is_some() {
+            self.roblox_mutex = new_mutex;
+        }
+        ctx.set_visuals(if next.dark_mode {
+            egui::Visuals::dark()
+        } else {
+            egui::Visuals::light()
+        });
+        self.settings = next;
+        Ok(())
+    }
+
+    fn settings_ui(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Settings");
+        ui.add_space(8.0);
+        let mut next = self.settings;
+        let singleton_changed = ui
+            .add_enabled(
+                !self.busy && !self.login_pending,
+                egui::Checkbox::new(
+                    &mut next.singleton,
+                    "Enable Roblox singleton (multiple clients)",
+                ),
+            )
+            .changed();
+        ui.small("Holds Roblox's singleton mutex to allow multiple clients. Enable before launching Roblox; changes may require closing existing Roblox clients.");
+        ui.add_space(12.0);
+        let theme_changed = ui.checkbox(&mut next.dark_mode, "Dark mode").changed();
+        ui.small("Turn off for light mode.");
+        if singleton_changed || theme_changed {
+            self.message = match self.apply_settings(ui.ctx(), next) {
+                Ok(()) => "Settings saved.".into(),
+                Err(error) => error,
+            };
+        }
+        ui.add_space(16.0);
+        ui.separator();
+        ui.heading("Import accounts");
+        ui.label("Import accountdata.csv from the original project folder. Existing usernames will be skipped.");
+        let can_import = !self.busy && !self.blocked && !self.login_pending;
+        if ui
+            .add_enabled(can_import, egui::Button::new("Import old CSV"))
+            .clicked()
+        {
+            self.confirm_import = true;
+        }
+        if self.confirm_import {
+            ui.label("Import these accounts into your encrypted account store?");
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .add_enabled(can_import, egui::Button::new("Confirm import"))
+                    .clicked()
+                {
+                    self.confirm_import = false;
+                    self.import(ui.ctx());
+                }
+                if ui.button("Cancel").clicked() {
+                    self.confirm_import = false;
+                }
+            });
+        }
+    }
+
     fn draw(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
-            egui::ScrollArea::vertical().id_salt("main").auto_shrink([false, false]).show(ui, |ui| {
-                ui.horizontal_wrapped(|ui| {
-                    ui.heading("Personal Roblox Account Controller");
-                    if ui.button("Light / dark").clicked() {
-                        if ctx.style().visuals.dark_mode { ctx.set_visuals(egui::Visuals::light()); }
-                        else { ctx.set_visuals(egui::Visuals::dark()); }
-                    }
-                });
-                ui.add_space(12.0);
-                if self.busy || self.login_pending { ui.spinner(); }
-                ui.label(&self.message);
-                ui.separator();
-                ui.add_space(8.0);
-                ui.add_enabled_ui(!self.busy && !self.blocked && !self.login_pending, |ui| {
-                    if ui.available_width() >= 720.0 {
-                        ui.columns(2, |columns| {
-                            self.accounts_ui(&mut columns[0]);
-                            self.detail_ui(&mut columns[1]);
-                        });
-                    } else {
-                        self.accounts_ui(ui);
-                        ui.add_space(16.0);
-                        ui.separator();
-                        self.detail_ui(ui);
-                    }
-                });
-                if self.confirm_import {
-                    ui.separator();
-                    ui.label("Import accountdata.csv from the original project folder? Existing usernames will be skipped.");
+            egui::ScrollArea::vertical()
+                .id_salt("main")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
                     ui.horizontal_wrapped(|ui| {
-                        if ui.add_enabled(!self.busy && !self.blocked && !self.login_pending, egui::Button::new("Confirm import")).clicked() {
+                        ui.heading("Personal Roblox Account Controller");
+                        if ui
+                            .selectable_label(!self.show_settings, "Accounts")
+                            .clicked()
+                        {
+                            self.show_settings = false;
                             self.confirm_import = false;
-                            self.import(ctx);
                         }
-                        if ui.button("Cancel").clicked() { self.confirm_import = false; }
+                        if ui
+                            .selectable_label(self.show_settings, "Settings")
+                            .clicked()
+                        {
+                            self.show_settings = true;
+                        }
                     });
-                }
-            });
+                    ui.add_space(12.0);
+                    if self.busy || self.login_pending {
+                        ui.spinner();
+                    }
+                    ui.label(&self.message);
+                    ui.separator();
+                    ui.add_space(8.0);
+                    if self.show_settings {
+                        self.settings_ui(ui);
+                    } else {
+                        ui.add_enabled_ui(
+                            !self.busy && !self.blocked && !self.login_pending,
+                            |ui| {
+                                if ui.available_width() >= 720.0 {
+                                    ui.columns(2, |columns| {
+                                        self.accounts_ui(&mut columns[0]);
+                                        self.detail_ui(&mut columns[1]);
+                                    });
+                                } else {
+                                    self.accounts_ui(ui);
+                                    ui.add_space(16.0);
+                                    ui.separator();
+                                    self.detail_ui(ui);
+                                }
+                            },
+                        );
+                    }
+                });
         });
     }
     fn smoke_step(&mut self, ctx: &egui::Context) {
@@ -572,7 +670,6 @@ fn run() -> Result<(), String> {
         },
         true,
     )?;
-    let _roblox_mutex = platform::MutexGuard::create("ROBLOX_singletonEvent", false)?;
     let smoke_profile = if smoke {
         Some(tempfile::tempdir().map_err(|_| "Could not create test store.")?)
     } else {
@@ -592,6 +689,15 @@ fn run() -> Result<(), String> {
     } else {
         store::location()?
     };
+    let settings = settings::Settings::load(&path.with_file_name("settings.json"))?;
+    let roblox_mutex = if settings.singleton {
+        Some(platform::MutexGuard::create(
+            "ROBLOX_singletonEvent",
+            false,
+        )?)
+    } else {
+        None
+    };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1050.0, 780.0])
@@ -607,8 +713,15 @@ fn run() -> Result<(), String> {
             if smoke {
                 println!("Smoke: native renderer initialized.");
             }
-            cc.egui_ctx.set_visuals(egui::Visuals::dark());
-            Ok(Box::new(Controller::new(&cc.egui_ctx, path, smoke)))
+            cc.egui_ctx.set_visuals(if settings.dark_mode {
+                egui::Visuals::dark()
+            } else {
+                egui::Visuals::light()
+            });
+            let mut app = Controller::new(&cc.egui_ctx, path, smoke);
+            app.settings = settings;
+            app.roblox_mutex = roblox_mutex;
+            Ok(Box::new(app))
         }),
     )
     .map_err(|error| format!("Could not run the desktop interface: {error}"))
