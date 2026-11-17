@@ -46,7 +46,7 @@ pub fn pick_csv() -> Result<Option<std::path::PathBuf>, String> {
         std::ffi::OsString::from_wide(&filename[..length]).into(),
     ))
 }
-pub struct MutexGuard(HANDLE);
+pub struct MutexGuard(HANDLE, bool);
 impl MutexGuard {
     pub fn create(name: &str, exclusive: bool) -> Result<Self, String> {
         let name = wide(name);
@@ -54,9 +54,16 @@ impl MutexGuard {
         if handle.is_null() {
             return Err("Could not create the Windows mutex.".into());
         }
-        let guard = Self(handle);
-        if exclusive && unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        let guard = Self(handle, unsafe { GetLastError() } == ERROR_ALREADY_EXISTS);
+        if exclusive && guard.1 {
             return Err("The Rust controller is already running.".into());
+        }
+        Ok(guard)
+    }
+    pub fn create_available(name: &str) -> Result<Self, String> {
+        let guard = Self::create(name, false)?;
+        if guard.1 {
+            return Err("The singleton mutex is already in use.".into());
         }
         Ok(guard)
     }
@@ -136,6 +143,15 @@ pub fn launch(uri: &str) -> Result<(), String> {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn existing_mutex_is_rejected_and_can_be_reacquired_after_close() {
+        let name = format!("Local\\ControllerMutexTest_{}", std::process::id());
+        let first = super::MutexGuard::create_available(&name).unwrap();
+        assert!(super::MutexGuard::create_available(&name).is_err());
+        drop(first);
+        assert!(super::MutexGuard::create_available(&name).is_ok());
+    }
+
     #[test]
     fn dpapi_roundtrip_and_corruption() {
         let plain = b"synthetic-test-data";

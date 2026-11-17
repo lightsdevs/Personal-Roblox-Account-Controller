@@ -13,6 +13,7 @@ use std::{
 use store::Account;
 
 type WorkResult = Result<(Option<Vec<Account>>, String), String>;
+const ROBLOX_WARNING: &str = "Multiple Roblox instances are unavailable. Close all Roblox instances (check the system tray), then restart this app to run multiple instances.";
 fn join_batch(
     accounts: Vec<Account>,
     target: roblox::Target,
@@ -58,6 +59,7 @@ struct Controller {
     show_settings: bool,
     settings: settings::Settings,
     roblox_mutex: Option<platform::MutexGuard>,
+    roblox_warning: bool,
     path: PathBuf,
     sender: mpsc::Sender<ResultEvent>,
     receiver: mpsc::Receiver<ResultEvent>,
@@ -93,6 +95,7 @@ impl Controller {
             show_settings: false,
             settings: settings::Settings::default(),
             roblox_mutex: None,
+            roblox_warning: false,
             path,
             sender,
             receiver,
@@ -469,10 +472,13 @@ impl Controller {
         next: settings::Settings,
     ) -> Result<(), String> {
         let new_mutex = if next.singleton && self.roblox_mutex.is_none() {
-            Some(platform::MutexGuard::create(
-                "ROBLOX_singletonEvent",
-                false,
-            )?)
+            match platform::MutexGuard::create_available("ROBLOX_singletonEvent") {
+                Ok(guard) => Some(guard),
+                Err(_) => {
+                    self.roblox_warning = true;
+                    None
+                }
+            }
         } else {
             None
         };
@@ -481,6 +487,7 @@ impl Controller {
             self.roblox_mutex = None;
         } else if new_mutex.is_some() {
             self.roblox_mutex = new_mutex;
+            self.roblox_warning = false;
         }
         ctx.set_visuals(if next.dark_mode {
             egui::Visuals::dark()
@@ -548,6 +555,10 @@ impl Controller {
                 .id_salt("main")
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
+                    if self.roblox_warning {
+                        ui.colored_label(ui.visuals().warn_fg_color, ROBLOX_WARNING);
+                        ui.separator();
+                    }
                     ui.horizontal_wrapped(|ui| {
                         ui.heading("Personal Roblox Account Controller");
                         if ui
@@ -683,13 +694,13 @@ fn run() -> Result<(), String> {
         store::location()?
     };
     let settings = settings::Settings::load(&path.with_file_name("settings.json"))?;
-    let roblox_mutex = if settings.singleton {
-        Some(platform::MutexGuard::create(
-            "ROBLOX_singletonEvent",
-            false,
-        )?)
+    let (roblox_mutex, roblox_warning) = if settings.singleton && !smoke {
+        match platform::MutexGuard::create_available("ROBLOX_singletonEvent") {
+            Ok(guard) => (Some(guard), false),
+            Err(_) => (None, true),
+        }
     } else {
-        None
+        (None, false)
     };
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -714,6 +725,7 @@ fn run() -> Result<(), String> {
             let mut app = Controller::new(&cc.egui_ctx, path, smoke);
             app.settings = settings;
             app.roblox_mutex = roblox_mutex;
+            app.roblox_warning = roblox_warning;
             Ok(Box::new(app))
         }),
     )

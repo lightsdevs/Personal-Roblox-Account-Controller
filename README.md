@@ -50,6 +50,9 @@ No Python, Selenium, or EdgeDriver is required for the Rust app.
   across restarts in `settings.json` alongside the account store. Singleton is
   enabled by default; enable it before launching multiple Roblox clients.
   Changes may require closing existing Roblox clients.
+  If Roblox is already running and the singleton cannot be acquired, the app
+  still opens with a warning. Close all Roblox instances (including any in the
+  system tray), then restart the controller to enable multiple instances.
 - The account list and controls appear side by side in wide windows and stack
   in narrow windows. Scroll vertically to reach controls in short windows.
 
