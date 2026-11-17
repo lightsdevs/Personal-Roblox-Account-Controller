@@ -315,7 +315,7 @@ impl Controller {
         let mut accounts = self.accounts.clone();
         self.work(ctx, "Importing accounts...", move || {
             let file = std::fs::File::open(
-                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../accountdata.csv"),
+                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("accountdata.csv"),
             )
             .map_err(|_| "Could not open accountdata.csv in the original project folder.")?;
             let count = store::import_reader(file, &mut accounts)?;
