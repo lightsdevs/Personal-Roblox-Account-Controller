@@ -38,6 +38,14 @@ No Python, Selenium, or EdgeDriver is required for the Rust app.
   sequentially. Progress names the current account; the final result reports
   successful launch requests and individual failures. An expired session needs
   another login, but does not prevent the remaining accounts from being attempted.
+- Enter the place ID from a Roblox game URL and click **Save game** to look up
+  its title automatically. Select a title in **Saved games** to fill the join ID,
+  then join with your selected accounts. **Remove saved game** removes that ID
+  from the list. Games can be saved without selecting an account. Duplicate IDs
+  are skipped; failed lookups leave the list unchanged.
+  IDs and cached titles persist in `games.json` alongside the account store,
+  so the saved list is available offline. Title lookup uses public Roblox APIs
+  without account credentials; saving a new game requires internet access.
 - Save description applies the entered text to every selected account in one
   encrypted store update. If their descriptions differ, enter a replacement or
   choose **Use empty description for all selected**, then save.

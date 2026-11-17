@@ -1,6 +1,7 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
 mod browser;
+mod games;
 mod platform;
 mod roblox;
 mod settings;
@@ -42,6 +43,8 @@ fn join_batch(
 }
 enum ResultEvent {
     Progress(String),
+    LoadedGames(Result<Vec<games::SavedGame>, String>),
+    SavedGames(Result<(Vec<games::SavedGame>, String), String>),
     Loaded(Result<Vec<Account>, String>),
     Worked(WorkResult),
 }
@@ -53,6 +56,8 @@ struct Controller {
     description_edited: bool,
     description: String,
     place: String,
+    saved_games: Vec<games::SavedGame>,
+    games_error: Option<String>,
     username: String,
     message: String,
     busy: bool,
@@ -78,6 +83,9 @@ impl Controller {
         let load_path = path.clone();
         let repaint = ctx.clone();
         std::thread::spawn(move || {
+            let _ = load_sender.send(ResultEvent::LoadedGames(games::load(
+                &load_path.with_file_name("games.json"),
+            )));
             let _ = load_sender.send(ResultEvent::Loaded(store::load(&load_path)));
             repaint.request_repaint();
         });
@@ -89,6 +97,8 @@ impl Controller {
             description_edited: false,
             description: String::new(),
             place: String::new(),
+            saved_games: Vec::new(),
+            games_error: None,
             username: String::new(),
             message: "Loading accounts...".into(),
             busy: true,
@@ -219,6 +229,13 @@ impl Controller {
     }
     fn receive(&mut self, ctx: &egui::Context) {
         while let Ok(event) = self.receiver.try_recv() {
+            if let ResultEvent::LoadedGames(result) = event {
+                match result {
+                    Ok(games) => self.saved_games = games,
+                    Err(error) => self.games_error = Some(error),
+                }
+                continue;
+            }
             if let ResultEvent::Progress(message) = event {
                 self.message = message;
                 continue;
@@ -226,6 +243,14 @@ impl Controller {
             self.busy = false;
             match event {
                 ResultEvent::Progress(_) => unreachable!(),
+                ResultEvent::LoadedGames(_) => unreachable!(),
+                ResultEvent::SavedGames(result) => match result {
+                    Ok((games, message)) => {
+                        self.saved_games = games;
+                        self.message = message;
+                    }
+                    Err(error) => self.message = error,
+                },
                 ResultEvent::Loaded(Ok(accounts)) => {
                     self.replace_accounts(accounts);
                     self.message = "Ready. Select an account or add one.".into();
@@ -362,10 +387,10 @@ impl Controller {
             Ok((None, message))
         });
     }
-    fn accounts_ui(&mut self, ui: &mut egui::Ui) {
+    fn accounts_ui(&mut self, ui: &mut egui::Ui, window_bottom: f32) {
         ui.heading("Accounts");
         ui.horizontal_wrapped(|ui| {
-            if ui.button("Add / sign in again").clicked() {
+            if ui.button("Add Account/Sign Back In").clicked() {
                 self.open_browser(ui.ctx(), true);
             }
         });
@@ -374,13 +399,18 @@ impl Controller {
             ui.label("No accounts yet. Add an account or import your existing CSV in Settings.");
         }
         let mut selected = None;
-        egui::Frame::group(ui.style())
+        // Reserve room for the frame, selection count, and session note.
+        let footer_height = 2.0 * egui::TextStyle::Small.resolve(ui.style()).size
+            + 3.0 * ui.spacing().item_spacing.y
+            + 22.0;
+        let list_height = (window_bottom - ui.cursor().top() - footer_height).max(24.0);
+        let accounts_frame = egui::Frame::group(ui.style())
             .fill(ui.visuals().extreme_bg_color)
             .inner_margin(4.0)
             .show(ui, |ui| {
                 egui::ScrollArea::vertical()
                     .id_salt("accounts")
-                    .max_height(320.0)
+                    .max_height(list_height)
                     .auto_shrink([false, true])
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 0.0;
@@ -403,6 +433,10 @@ impl Controller {
                         }
                     });
             });
+        // Keep scrolling over the list from moving the outer window at either edge.
+        if ui.rect_contains_pointer(accounts_frame.response.rect) {
+            ui.input_mut(|input| input.smooth_scroll_delta.y = 0.0);
+        }
         if let Some(index) = selected {
             let modifiers = ui.input(|i| i.modifiers);
             self.select_click(index, modifiers.ctrl || modifiers.command, modifiers.shift);
@@ -410,6 +444,132 @@ impl Controller {
         ui.small(format!("{} selected", self.selected.len()));
         ui.add_space(12.0);
         ui.small("Sessions are encrypted for your Windows user.");
+    }
+    fn save_game(&mut self, ctx: &egui::Context, remove: bool) {
+        if self.games_error.is_some() {
+            return;
+        }
+        let Some(id) = self.place.trim().parse::<u64>().ok().filter(|id| *id > 0) else {
+            self.message = "Enter a positive numeric place ID.".into();
+            return;
+        };
+        if !remove && self.saved_games.iter().any(|game| game.place_id == id) {
+            self.message = "This game is already saved.".into();
+            return;
+        }
+        let mut games = self.saved_games.clone();
+        let path = self.path.with_file_name("games.json");
+        let sender = self.sender.clone();
+        let repaint = ctx.clone();
+        self.busy = true;
+        self.message = if remove {
+            "Removing saved game..."
+        } else {
+            "Looking up game title and saving..."
+        }
+        .into();
+        std::thread::spawn(move || {
+            let result = (|| {
+                let message = if remove {
+                    games.retain(|game| game.place_id != id);
+                    "Saved game removed.".to_owned()
+                } else {
+                    let title = roblox::game_title(id)?;
+                    let message = format!("Saved {title}.");
+                    games.push(games::SavedGame {
+                        place_id: id,
+                        title,
+                    });
+                    message
+                };
+                games::save(&path, &games)?;
+                Ok((games, message))
+            })();
+            let _ = sender.send(ResultEvent::SavedGames(result));
+            repaint.request_repaint();
+        });
+    }
+    fn games_ui(&mut self, ui: &mut egui::Ui) {
+        ui.label("Place ID");
+        ui.add(
+            egui::TextEdit::singleline(&mut self.place)
+                .desired_width(f32::INFINITY)
+                .hint_text("Place ID to join"),
+        );
+        if let Some(error) = &self.games_error {
+            ui.colored_label(ui.visuals().error_fg_color, error);
+        }
+        ui.horizontal_wrapped(|ui| {
+            let count = self.selected.len();
+            if ui
+                .add_enabled(
+                    count > 0,
+                    egui::Button::new(if count > 1 {
+                        format!("Join {count} accounts by place ID")
+                    } else {
+                        "Join by place ID".into()
+                    }),
+                )
+                .clicked()
+            {
+                self.join(ui.ctx(), false);
+            }
+            if ui
+                .add_enabled(self.games_error.is_none(), egui::Button::new("Save game"))
+                .clicked()
+            {
+                self.save_game(ui.ctx(), false);
+            }
+            let saved = self
+                .saved_games
+                .iter()
+                .any(|game| Some(game.place_id) == self.place.trim().parse::<u64>().ok());
+            if ui
+                .add_enabled(
+                    saved && self.games_error.is_none(),
+                    egui::Button::new("Remove saved game"),
+                )
+                .clicked()
+            {
+                self.save_game(ui.ctx(), true);
+            }
+        });
+        if !self.saved_games.is_empty() {
+            ui.label("Saved Games");
+            let games_frame = egui::Frame::group(ui.style())
+                .fill(ui.visuals().extreme_bg_color)
+                .inner_margin(4.0)
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt("saved_games")
+                        .max_height(3.0 * 24.0)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.spacing_mut().item_spacing.y = 0.0;
+                            for game in &self.saved_games {
+                                let label = format!("{} ({})", game.title, game.place_id);
+                                if ui
+                                    .add(
+                                        egui::Button::selectable(
+                                            self.place.trim() == game.place_id.to_string(),
+                                            &label,
+                                        )
+                                        .truncate()
+                                        .min_size(egui::vec2(ui.available_width(), 24.0)),
+                                    )
+                                    .on_hover_text(&label)
+                                    .clicked()
+                                {
+                                    self.place = game.place_id.to_string();
+                                }
+                            }
+                        });
+                });
+            // Consume wheel input left over at the list edges before the outer area sees it.
+            if ui.rect_contains_pointer(games_frame.response.rect) {
+                ui.input_mut(|input| input.smooth_scroll_delta.y = 0.0);
+            }
+        }
     }
     fn detail_ui(&mut self, ui: &mut egui::Ui) {
         let count = self.selected.len();
@@ -422,21 +582,9 @@ impl Controller {
         };
         ui.heading(title);
         ui.add_space(8.0);
+        self.games_ui(ui);
+        ui.add_space(8.0);
         ui.add_enabled_ui(count > 0, |ui| {
-            if ui.add_enabled(count == 1, egui::Button::new("Open account browser")).on_disabled_hover_text("Select one account to open its browser.").clicked() {
-                self.open_browser(ui.ctx(), false);
-            }
-            ui.add_space(12.0);
-            ui.label("Place ID");
-            ui.add(
-                egui::TextEdit::singleline(&mut self.place)
-                    .desired_width(f32::INFINITY)
-                    .hint_text("Enter a place ID"),
-            );
-            if ui.button(if count > 1 { format!("Join {count} accounts by place ID") } else { "Join by place ID".into() }).clicked() {
-                self.join(ui.ctx(), false);
-            }
-            ui.add_space(12.0);
             ui.label("Player username");
             ui.add(
                 egui::TextEdit::singleline(&mut self.username)
@@ -461,6 +609,10 @@ impl Controller {
                 .on_disabled_hover_text("Edit the description to replace the differing descriptions of the selected accounts.")
                 .clicked() {
                 self.save_description(ui.ctx());
+            }
+            ui.add_space(12.0);
+            if ui.add_enabled(count == 1, egui::Button::new("Open account browser")).on_disabled_hover_text("Select one account to open its browser.").clicked() {
+                self.open_browser(ui.ctx(), false);
             }
         });
     }
@@ -552,7 +704,9 @@ impl Controller {
             egui::ScrollArea::vertical()
                 .id_salt("main")
                 .auto_shrink([false, false])
-                .show(ui, |ui| {
+                .show_viewport(ui, |ui, viewport| {
+                    // Use the unscrolled viewport bottom so outer scrolling cannot resize the list.
+                    let window_bottom = ui.max_rect().top() + viewport.height();
                     if self.roblox_warning {
                         ui.colored_label(ui.visuals().warn_fg_color, ROBLOX_WARNING);
                         ui.separator();
@@ -583,11 +737,11 @@ impl Controller {
                             |ui| {
                                 if ui.available_width() >= 720.0 {
                                     ui.columns(2, |columns| {
-                                        self.accounts_ui(&mut columns[0]);
+                                        self.accounts_ui(&mut columns[0], window_bottom);
                                         self.detail_ui(&mut columns[1]);
                                     });
                                 } else {
-                                    self.accounts_ui(ui);
+                                    self.accounts_ui(ui, window_bottom);
                                     ui.add_space(16.0);
                                     ui.separator();
                                     self.detail_ui(ui);
@@ -754,10 +908,53 @@ mod tests {
         .unwrap();
         let ctx = egui::Context::default();
         let mut app = Controller::new(&ctx, path, false);
+        let games_event = app.receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        let accounts_event = app.receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        app.sender.send(games_event).unwrap();
+        app.sender.send(accounts_event).unwrap();
+        app.receive(&ctx);
+        (directory, ctx, app)
+    }
+
+    #[test]
+    fn saved_game_controls_reject_invalid_duplicates_and_persist_removal() {
+        let (_directory, ctx, mut app) = fixture();
+        app.place = "not an ID".into();
+        app.save_game(&ctx, false);
+        assert!(!app.busy);
+        assert!(app.message.contains("positive numeric"));
+        app.saved_games = vec![games::SavedGame {
+            place_id: 42,
+            title: "Saved title".into(),
+        }];
+        games::save(&app.path.with_file_name("games.json"), &app.saved_games).unwrap();
+        app.place = "42".into();
+        app.save_game(&ctx, false);
+        assert!(!app.busy);
+        assert!(app.message.contains("already saved"));
+        app.save_game(&ctx, true);
         let event = app.receiver.recv_timeout(Duration::from_secs(5)).unwrap();
         app.sender.send(event).unwrap();
         app.receive(&ctx);
-        (directory, ctx, app)
+        assert!(!app.busy);
+        assert!(app.saved_games.is_empty());
+        assert!(games::load(&app.path.with_file_name("games.json"))
+            .unwrap()
+            .is_empty());
+        app.saved_games.push(games::SavedGame {
+            place_id: 42,
+            title: "Cached title".into(),
+        });
+        app.sender
+            .send(ResultEvent::SavedGames(Err("Lookup failed".into())))
+            .unwrap();
+        app.receive(&ctx);
+        assert_eq!(app.saved_games[0].title, "Cached title");
+        assert_eq!(app.message, "Lookup failed");
+        app.games_error = Some("Invalid saved games file".into());
+        app.save_game(&ctx, true);
+        assert!(!app.busy);
+        assert_eq!(app.saved_games.len(), 1);
     }
 
     #[test]
