@@ -1,5 +1,12 @@
-accountdata.csv
-__pycache__/
-*.pyc
-.venv/
-startup.log
+# Cargo build output (keep Cargo.lock tracked for this application)
+/target/
+
+# Rust compiler and formatter artifacts
+*.pdb
+**/*.rs.bk
+
+# Local account data and runtime logs
+/accountdata.csv
+/accounts.dpapi
+/settings.json
+*.log
