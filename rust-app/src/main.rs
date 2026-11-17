@@ -544,6 +544,20 @@ impl Controller {
     }
 
     fn draw(&mut self, ctx: &egui::Context) {
+        egui::TopBottomPanel::bottom("status")
+            .exact_height(32.0)
+            .resizable(false)
+            .show(ctx, |ui| {
+                ui.horizontal_centered(|ui| {
+                    let (rect, _) =
+                        ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::hover());
+                    if self.busy || self.login_pending {
+                        ui.put(rect, egui::Spinner::new().size(18.0));
+                    }
+                    ui.add(egui::Label::new(&self.message).truncate())
+                        .on_hover_text(&self.message);
+                });
+            });
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
             egui::ScrollArea::vertical()
@@ -567,10 +581,6 @@ impl Controller {
                         }
                     });
                     ui.add_space(12.0);
-                    if self.busy || self.login_pending {
-                        ui.spinner();
-                    }
-                    ui.label(&self.message);
                     ui.separator();
                     ui.add_space(8.0);
                     if self.show_settings {
@@ -932,7 +942,7 @@ mod tests {
                         vec![]
                     } else {
                         vec![
-                            egui::Event::PointerMoved(egui::pos2(size.x - 20.0, size.y - 20.0)),
+                            egui::Event::PointerMoved(egui::pos2(size.x - 20.0, size.y / 2.0)),
                             egui::Event::MouseWheel {
                                 unit: egui::MouseWheelUnit::Point,
                                 delta: egui::vec2(0.0, -160.0),
