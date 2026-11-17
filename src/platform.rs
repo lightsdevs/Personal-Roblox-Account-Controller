@@ -10,7 +10,43 @@ use windows_sys::Win32::{
 fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(Some(0)).collect()
 }
-pub struct MutexGuard(HANDLE);
+pub fn pick_csv() -> Result<Option<std::path::PathBuf>, String> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::UI::Controls::Dialogs::{
+        CommDlgExtendedError, GetOpenFileNameW, OFN_EXPLORER, OFN_FILEMUSTEXIST, OFN_NOCHANGEDIR,
+        OFN_PATHMUSTEXIST, OPENFILENAMEW,
+    };
+
+    let mut filename = vec![0u16; 32768];
+    let filter = wide("CSV files (*.csv)\0*.csv\0All files (*.*)\0*.*\0");
+    let title = wide("Import old CSV");
+    let mut dialog = OPENFILENAMEW {
+        lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
+        lpstrFilter: filter.as_ptr(),
+        nFilterIndex: 1,
+        lpstrFile: filename.as_mut_ptr(),
+        nMaxFile: filename.len() as u32,
+        lpstrTitle: title.as_ptr(),
+        Flags: OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR,
+        ..Default::default()
+    };
+    // Buffers remain alive throughout the synchronous Windows dialog call.
+    if unsafe { GetOpenFileNameW(&mut dialog) } == 0 {
+        return if unsafe { CommDlgExtendedError() } == 0 {
+            Ok(None)
+        } else {
+            Err("Could not open the CSV file picker.".into())
+        };
+    }
+    let length = filename
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(filename.len());
+    Ok(Some(
+        std::ffi::OsString::from_wide(&filename[..length]).into(),
+    ))
+}
+pub struct MutexGuard(HANDLE, bool);
 impl MutexGuard {
     pub fn create(name: &str, exclusive: bool) -> Result<Self, String> {
         let name = wide(name);
@@ -18,9 +54,16 @@ impl MutexGuard {
         if handle.is_null() {
             return Err("Could not create the Windows mutex.".into());
         }
-        let guard = Self(handle);
-        if exclusive && unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
+        let guard = Self(handle, unsafe { GetLastError() } == ERROR_ALREADY_EXISTS);
+        if exclusive && guard.1 {
             return Err("The Rust controller is already running.".into());
+        }
+        Ok(guard)
+    }
+    pub fn create_available(name: &str) -> Result<Self, String> {
+        let guard = Self::create(name, false)?;
+        if guard.1 {
+            return Err("The singleton mutex is already in use.".into());
         }
         Ok(guard)
     }
@@ -100,6 +143,15 @@ pub fn launch(uri: &str) -> Result<(), String> {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn existing_mutex_is_rejected_and_can_be_reacquired_after_close() {
+        let name = format!("Local\\ControllerMutexTest_{}", std::process::id());
+        let first = super::MutexGuard::create_available(&name).unwrap();
+        assert!(super::MutexGuard::create_available(&name).is_err());
+        drop(first);
+        assert!(super::MutexGuard::create_available(&name).is_ok());
+    }
+
     #[test]
     fn dpapi_roundtrip_and_corruption() {
         let plain = b"synthetic-test-data";

@@ -9,4 +9,5 @@
 /accountdata.csv
 /accounts.dpapi
 /settings.json
+/games.json
 *.log

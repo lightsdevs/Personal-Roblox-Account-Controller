@@ -114,6 +114,59 @@ struct Place {
 struct Users {
     data: Vec<User>,
 }
+pub fn game_title(place_id: u64) -> Result<String, String> {
+    #[derive(Deserialize)]
+    struct Universe {
+        #[serde(rename = "universeId")]
+        id: Option<u64>,
+    }
+    #[derive(Deserialize)]
+    struct Games {
+        data: Vec<Game>,
+    }
+    #[derive(Deserialize)]
+    struct Game {
+        id: u64,
+        name: String,
+    }
+    let client = Client::builder()
+        .timeout(Duration::from_secs(20))
+        .redirect(Policy::none())
+        .build()
+        .map_err(|_| "Could not initialize networking.")?;
+    let fetch = |request: RequestBuilder| -> Result<Response, String> {
+        let response = send(request)?;
+        if !response.status().is_success() {
+            return Err(format!(
+                "Could not look up game title (Roblox HTTP {}).",
+                response.status().as_u16()
+            ));
+        }
+        Ok(response)
+    };
+    let universe: Universe = fetch(client.get(format!(
+        "https://apis.roblox.com/universes/v1/places/{place_id}/universe"
+    )))?
+    .json()
+    .map_err(|_| "Roblox returned an invalid game lookup response.")?;
+    let id = universe
+        .id
+        .filter(|id| *id > 0)
+        .ok_or("Place ID not found.")?;
+    let games: Games = fetch(
+        client
+            .get("https://games.roblox.com/v1/games")
+            .query(&[("universeIds", id)]),
+    )?
+    .json()
+    .map_err(|_| "Roblox returned invalid game details.")?;
+    games
+        .data
+        .into_iter()
+        .find(|game| game.id == id && !game.name.trim().is_empty())
+        .map(|game| game.name)
+        .ok_or("Game title is unavailable. Check the place ID and try again.".into())
+}
 #[derive(Deserialize)]
 struct User {
     id: u64,
