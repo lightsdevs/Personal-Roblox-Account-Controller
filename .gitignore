@@ -1,3 +1,5 @@
 accountdata.csv
 __pycache__/
 *.pyc
+.venv/
+startup.log

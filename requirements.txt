@@ -1,0 +1,6 @@
+sv_ttk
+pywinstyles
+selenium
+pandas
+requests
+webdriver-manager
