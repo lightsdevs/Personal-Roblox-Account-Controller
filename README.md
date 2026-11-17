@@ -27,8 +27,8 @@ No Python, Selenium, or EdgeDriver is required for the Rust app.
 - **Add / sign in again** opens a fresh isolated Roblox login window. Sign in on
   Roblox's own page. The app validates the account before saving its session.
   Signing in again updates that username's session and preserves its description.
-- **Settings > Import old CSV** reads `accountdata.csv` from the original project folder
-  (the repository location at build time), only after you choose this action.
+- **Settings > Import old CSV** opens a Windows file picker to choose a CSV file
+  from any folder. Cancelling leaves the account store unchanged.
   It imports usernames, sessions, and descriptions; duplicate usernames are
   skipped case-insensitively. It does not validate imported sessions immediately.
   The original CSV is never modified or deleted.

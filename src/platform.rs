@@ -10,6 +10,42 @@ use windows_sys::Win32::{
 fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(Some(0)).collect()
 }
+pub fn pick_csv() -> Result<Option<std::path::PathBuf>, String> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::UI::Controls::Dialogs::{
+        CommDlgExtendedError, GetOpenFileNameW, OFN_EXPLORER, OFN_FILEMUSTEXIST, OFN_NOCHANGEDIR,
+        OFN_PATHMUSTEXIST, OPENFILENAMEW,
+    };
+
+    let mut filename = vec![0u16; 32768];
+    let filter = wide("CSV files (*.csv)\0*.csv\0All files (*.*)\0*.*\0");
+    let title = wide("Import old CSV");
+    let mut dialog = OPENFILENAMEW {
+        lStructSize: std::mem::size_of::<OPENFILENAMEW>() as u32,
+        lpstrFilter: filter.as_ptr(),
+        nFilterIndex: 1,
+        lpstrFile: filename.as_mut_ptr(),
+        nMaxFile: filename.len() as u32,
+        lpstrTitle: title.as_ptr(),
+        Flags: OFN_EXPLORER | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR,
+        ..Default::default()
+    };
+    // Buffers remain alive throughout the synchronous Windows dialog call.
+    if unsafe { GetOpenFileNameW(&mut dialog) } == 0 {
+        return if unsafe { CommDlgExtendedError() } == 0 {
+            Ok(None)
+        } else {
+            Err("Could not open the CSV file picker.".into())
+        };
+    }
+    let length = filename
+        .iter()
+        .position(|&c| c == 0)
+        .unwrap_or(filename.len());
+    Ok(Some(
+        std::ffi::OsString::from_wide(&filename[..length]).into(),
+    ))
+}
 pub struct MutexGuard(HANDLE);
 impl MutexGuard {
     pub fn create(name: &str, exclusive: bool) -> Result<Self, String> {

@@ -55,7 +55,6 @@ struct Controller {
     busy: bool,
     blocked: bool,
     login_pending: bool,
-    confirm_import: bool,
     show_settings: bool,
     settings: settings::Settings,
     roblox_mutex: Option<platform::MutexGuard>,
@@ -91,7 +90,6 @@ impl Controller {
             busy: true,
             blocked: false,
             login_pending: false,
-            confirm_import: false,
             show_settings: false,
             settings: settings::Settings::default(),
             roblox_mutex: None,
@@ -313,11 +311,12 @@ impl Controller {
     fn import(&mut self, ctx: &egui::Context) {
         let path = self.path.clone();
         let mut accounts = self.accounts.clone();
-        self.work(ctx, "Importing accounts...", move || {
-            let file = std::fs::File::open(
-                PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("accountdata.csv"),
-            )
-            .map_err(|_| "Could not open accountdata.csv in the original project folder.")?;
+        self.work(ctx, "Choose a CSV file to import...", move || {
+            let Some(source) = platform::pick_csv()? else {
+                return Ok((None, "Import cancelled.".into()));
+            };
+            let file =
+                std::fs::File::open(source).map_err(|_| "Could not open the selected CSV file.")?;
             let count = store::import_reader(file, &mut accounts)?;
             store::save(&path, &accounts)?;
             Ok((
@@ -518,28 +517,13 @@ impl Controller {
         ui.add_space(16.0);
         ui.separator();
         ui.heading("Import accounts");
-        ui.label("Import accountdata.csv from the original project folder. Existing usernames will be skipped.");
+        ui.label("Choose a CSV file to import into your encrypted account store. Existing usernames will be skipped.");
         let can_import = !self.busy && !self.blocked && !self.login_pending;
         if ui
             .add_enabled(can_import, egui::Button::new("Import old CSV"))
             .clicked()
         {
-            self.confirm_import = true;
-        }
-        if self.confirm_import {
-            ui.label("Import these accounts into your encrypted account store?");
-            ui.horizontal_wrapped(|ui| {
-                if ui
-                    .add_enabled(can_import, egui::Button::new("Confirm import"))
-                    .clicked()
-                {
-                    self.confirm_import = false;
-                    self.import(ui.ctx());
-                }
-                if ui.button("Cancel").clicked() {
-                    self.confirm_import = false;
-                }
-            });
+            self.import(ui.ctx());
         }
     }
 
@@ -571,7 +555,6 @@ impl Controller {
                             .clicked()
                         {
                             self.show_settings = false;
-                            self.confirm_import = false;
                         }
                         if ui
                             .selectable_label(self.show_settings, "Settings")
