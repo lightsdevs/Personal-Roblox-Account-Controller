@@ -73,7 +73,10 @@ def readdata(filea):
             reader = csv.reader(csv_file)
             next(reader, None)  # Skip the header.
             # Unpack the row directly in the head of the for loop.
-            for username,cookie, description in reader:
+            for row in reader:
+                if not row:
+                    continue
+                username, cookie, description = row
                 accountlist.append(accounts.Account(cookie, description))
         return accountlist
 
@@ -110,7 +113,7 @@ button_frame = tk.Frame(first_frame)
 button_frame.pack(side=tk.BOTTOM, padx=20, pady=20)
 
 accounter = []
-accountlist = tk.Listbox(first_frame)
+accountlist = tk.Listbox(first_frame, exportselection=False)
 for i in readdata('accountdata.csv'):
     accounter.append(i)
     accountlist.insert(END, str(i))
@@ -176,15 +179,26 @@ desc_text.pack(padx=10,pady=10,side=tk.TOP)
 desc_text['height'] = 10
 
 def set_description():
-    playerokok = accounter[accountlist.curselection()[0]]
-    playerokok.description = desc_text.get(1.0, "end-1c")
-    print(playerokok.description)
-    df = pd.read_csv('accountdata.csv')
-    df.loc[accounter.index(playerokok), 'description'] = playerokok.description
-    df.to_csv('accountdata.csv', index=False)
-    peepeeindex = accounter.index(playerokok)
-    accountlist.delete(peepeeindex)
-    accountlist.insert(peepeeindex, str(playerokok))
+    selection = accountlist.curselection()
+    if not selection:
+        messagebox.showinfo("Set Description", "Select an account first.")
+        return
+    index = selection[0]
+    account = accounter[index]
+    description = desc_text.get("1.0", "end-1c")
+    try:
+        # Empty descriptions must remain strings, not inferred numeric/NaN values.
+        df = pd.read_csv('accountdata.csv', dtype=str, keep_default_na=False)
+        df.loc[index, 'description'] = description
+        df.to_csv('accountdata.csv', index=False)
+    except (OSError, ValueError) as error:
+        messagebox.showerror("Set Description", f"Could not save the description:\n{error}")
+        return
+    account.description = description
+    accountlist.delete(index)
+    accountlist.insert(index, str(account))
+    accountlist.selection_set(index)
+    accountlist.activate(index)
 
 
 desc_button = ttk.Button(button_frame, text='Set Description', command=set_description)
@@ -205,7 +219,7 @@ def addaccount():
                 root.after(0, _on_fail)
                 return
             accoun = accounts.Account(cookie)
-            with open('accountdata.csv', 'a') as dr:
+            with open('accountdata.csv', 'a', newline='') as dr:
                 dr.write(accoun.csvstring())
             # Update UI from the main thread
             def _update_ui():

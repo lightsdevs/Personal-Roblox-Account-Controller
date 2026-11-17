@@ -1,4 +1,5 @@
 import csv
+import io
 import player
 
 class Account:
@@ -12,4 +13,6 @@ class Account:
         return f"{self.name}  |  {self.description}"
     
     def csvstring(self):
-        return f'\n{self.name},{self.cookie},{self.description}'
+        row = io.StringIO(newline='')
+        csv.writer(row).writerow([self.name, self.cookie, self.description])
+        return '\n' + row.getvalue()[:-2]
