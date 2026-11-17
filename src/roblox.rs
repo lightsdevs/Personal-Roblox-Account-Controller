@@ -98,6 +98,7 @@ pub fn validate(cookie: String) -> Result<Account, String> {
         username: identity.username,
         cookie,
         description: String::new(),
+        background: false,
     })
 }
 #[derive(Clone)]
@@ -202,7 +203,7 @@ fn protocol(ticket: &str, launcher: &str, tracker: &str, now: u128) -> String {
     let encoded: String = url::form_urlencoded::byte_serialize(launcher.as_bytes()).collect();
     format!("roblox-player:1+launchmode:play+gameinfo:{ticket}+launchtime:{now}+placelauncherurl:{encoded}+browsertrackerid:{tracker}+robloxLocale:en_us+gameLocale:en_us+channel:+LaunchExp:InApp")
 }
-pub fn join(account: Account, target: Target) -> Result<(), String> {
+pub fn join(account: Account, target: Target, background_cpu_percent: u32) -> Result<(), String> {
     let session = Session::new(&account.cookie)?;
     let ticket = session.ticket()?;
     let (follow, id) = match target {
@@ -254,7 +255,12 @@ pub fn join(account: Account, target: Target) -> Result<(), String> {
         &tracker,
         (100000 + (now.as_nanos() / 7) % 1655001) as u64,
     );
-    crate::platform::launch(&protocol(&ticket, &launcher, &tracker, now.as_millis()))
+    let uri = protocol(&ticket, &launcher, &tracker, now.as_millis());
+    if account.background {
+        crate::background::launch(&uri, background_cpu_percent)
+    } else {
+        crate::platform::launch(&uri)
+    }
 }
 #[cfg(test)]
 mod tests {

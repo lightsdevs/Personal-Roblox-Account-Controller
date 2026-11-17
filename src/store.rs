@@ -9,6 +9,8 @@ pub struct Account {
     pub username: String,
     pub cookie: String,
     pub description: String,
+    #[serde(default)]
+    pub background: bool,
 }
 pub fn location() -> Result<PathBuf, String> {
     let base = std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA is unavailable.")?;
@@ -101,9 +103,11 @@ mod tests {
             username: "Test".into(),
             cookie: "fake-cookie".into(),
             description: "a\nb".into(),
+            background: true,
         }];
         save(&path, &accounts).unwrap();
         assert_eq!(load(&path).unwrap()[0].description, "a\nb");
+        assert!(load(&path).unwrap()[0].background);
         save(&path, &[]).unwrap();
         assert!(load(&path).unwrap().is_empty());
     }
