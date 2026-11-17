@@ -144,11 +144,10 @@ impl Controller {
             .selected
             .iter()
             .any(|&i| self.accounts[i].description != first);
-        self.description = if self.mixed_descriptions {
-            String::new()
-        } else {
-            first.to_owned()
-        };
+        if self.selected.len() > 1 {
+            return;
+        }
+        self.description = first.to_owned();
         self.description_edited = false;
     }
     fn replace_accounts(&mut self, accounts: Vec<Account>) {
@@ -450,8 +449,6 @@ impl Controller {
             }
             ui.add_space(12.0);
             ui.label("Description");
-            if count > 1 { ui.small("Saving replaces the description for every selected account."); }
-            if self.mixed_descriptions { ui.small("Selected accounts have different descriptions. Enter a replacement to apply to all."); }
             if ui.add(
                 egui::TextEdit::multiline(&mut self.description)
                     .desired_width(f32::INFINITY)
@@ -459,12 +456,11 @@ impl Controller {
                     .char_limit(10000)
                     .hint_text("Description for the selected accounts"),
             ).changed() { self.description_edited = true; }
-            if ui.add_enabled(!self.mixed_descriptions || self.description_edited, egui::Button::new(if count > 1 { format!("Save description for {count} accounts") } else { "Save description".into() })).clicked() {
+            if ui.add_enabled(!self.mixed_descriptions || self.description_edited, egui::Button::new("Save description"))
+                .on_hover_text("Save the description for every selected account.")
+                .on_disabled_hover_text("Edit the description to replace the differing descriptions of the selected accounts.")
+                .clicked() {
                 self.save_description(ui.ctx());
-            }
-            if self.mixed_descriptions && ui.button("Use empty description for all selected").clicked() {
-                self.description.clear();
-                self.description_edited = true;
             }
         });
     }
@@ -810,16 +806,23 @@ mod tests {
         app.select(1);
         app.select_click(4, true, false);
         assert_eq!(app.selected, BTreeSet::from([1, 4]));
+        assert_eq!(app.description, "Note 1");
         app.select_click(4, true, false);
         assert_eq!(app.selected, BTreeSet::from([1]));
         app.select_click(2, false, true); // range from the last clicked anchor, in reverse
         assert_eq!(app.selected, BTreeSet::from([2, 3, 4]));
+        assert_eq!(app.description, "Note 1");
+        app.description = "Draft note".into();
+        app.description_edited = true;
         app.select_click(5, false, true); // anchor remains 4
         assert_eq!(app.selected, BTreeSet::from([4, 5]));
+        assert_eq!(app.description, "Draft note");
+        assert!(app.description_edited);
         app.select_click(1, true, true); // add a range to the existing selection
         assert_eq!(app.selected, BTreeSet::from([1, 2, 3, 4, 5]));
         app.select(0);
         assert_eq!(app.selected, BTreeSet::from([0]));
+        assert_eq!(app.description, "Note 0");
         app.select_click(0, true, false);
         assert!(app.selected.is_empty());
         assert!(app.description.is_empty());
