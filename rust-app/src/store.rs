@@ -3,7 +3,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
 };
-// Never derive Debug: this type contains a credential. Only public metadata crosses IPC.
+// Never derive Debug: this type contains a credential. Render only username/description.
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Account {
     pub username: String,

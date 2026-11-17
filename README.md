@@ -25,7 +25,7 @@ validation without changing the Python application or saved accounts.
 they do not need to be installed with pip.
 
 A Rust desktop rewrite is now available in [`rust-app`](rust-app/README.md), with
-WebView2 login, encrypted account storage, optional CSV import, descriptions,
+an egui interface, WebView2 login, encrypted account storage, optional CSV import, descriptions,
 account browser windows, and place/player joins. From this repository root, run
 `.\rust-app\run.ps1`. Live Roblox acceptance checks
 for the rewrite are still pending; the original Python launcher remains available.
