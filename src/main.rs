@@ -917,8 +917,17 @@ fn run() -> Result<(), String> {
     } else {
         (None, false)
     };
+    let icon =
+        image::load_from_memory_with_format(include_bytes!("../app.ico"), image::ImageFormat::Ico)
+            .map_err(|error| format!("Could not load the application icon: {error}"))?
+            .into_rgba8();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
+            .with_icon(egui::IconData {
+                width: icon.width(),
+                height: icon.height(),
+                rgba: icon.into_raw(),
+            })
             .with_inner_size([1050.0, 780.0])
             .with_min_inner_size([320.0, 240.0])
             .with_visible(!smoke),
@@ -929,6 +938,8 @@ fn run() -> Result<(), String> {
         "Personal Roblox Account Controller",
         options,
         Box::new(move |cc| {
+            // Set both Windows icon sizes even when the controller starts in the background.
+            platform::set_window_icons(cc);
             if smoke {
                 println!("Smoke: native renderer initialized.");
             }

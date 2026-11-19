@@ -10,6 +10,43 @@ use windows_sys::Win32::{
 fn wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(Some(0)).collect()
 }
+
+pub fn set_window_icons(window: &impl tao::rwh_06::HasWindowHandle) {
+    use tao::rwh_06::RawWindowHandle;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetSystemMetrics, LoadImageW, SendMessageW, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_SHARED,
+        SM_CXICON, SM_CXSMICON, SM_CYICON, SM_CYSMICON, WM_SETICON,
+    };
+
+    let Ok(handle) = window.window_handle() else {
+        return;
+    };
+    let RawWindowHandle::Win32(raw) = handle.as_raw() else {
+        return;
+    };
+    let Some(instance) = raw.hinstance else {
+        return;
+    };
+    for (kind, width, height) in [
+        (ICON_BIG, SM_CXICON, SM_CYICON),
+        (ICON_SMALL, SM_CXSMICON, SM_CYSMICON),
+    ] {
+        // winresource embeds app.ico as resource 1. Windows owns LR_SHARED handles.
+        unsafe {
+            let icon = LoadImageW(
+                instance.get() as _,
+                1usize as _,
+                IMAGE_ICON,
+                GetSystemMetrics(width),
+                GetSystemMetrics(height),
+                LR_SHARED,
+            );
+            if !icon.is_null() {
+                SendMessageW(raw.hwnd.get() as _, WM_SETICON, kind as _, icon as _);
+            }
+        }
+    }
+}
 pub fn pick_csv() -> Result<Option<std::path::PathBuf>, String> {
     use std::os::windows::ffi::OsStringExt;
     use windows_sys::Win32::UI::Controls::Dialogs::{
