@@ -702,7 +702,7 @@ impl Controller {
         let theme_changed = ui.checkbox(&mut next.dark_mode, "Dark mode").changed();
         ui.small("Turn off for light mode.");
         ui.add_space(12.0);
-        ui.label("Background CPU cap");
+        ui.label("Background CPU cap (Experimental)");
         ui.add(egui::Slider::new(&mut self.cpu_cap_input, 1..=100).suffix("%"));
         ui.small("All background accounts share this percentage of total CPU.");
         let apply_cap = ui
@@ -725,7 +725,7 @@ impl Controller {
         if ui
             .add_enabled(
                 !self.busy && !self.login_pending,
-                egui::Button::new("Trim background RAM"),
+                egui::Button::new("Trim background RAM (Experimental)"),
             )
             .clicked()
         {
