@@ -264,6 +264,7 @@ fn browser(
         .with_inner_size(LogicalSize::new(1100., 800.))
         .build(target)
         .map_err(|_| "Could not create a browser window.")?;
+    crate::platform::set_window_icons(&window);
     let profile = tempfile::Builder::new()
         .prefix("prac-browser-")
         .tempdir()

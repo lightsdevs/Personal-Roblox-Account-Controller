@@ -1,5 +1,6 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 
+mod background;
 mod browser;
 mod games;
 mod platform;
@@ -65,6 +66,7 @@ struct Controller {
     login_pending: bool,
     show_settings: bool,
     settings: settings::Settings,
+    cpu_cap_input: u32,
     roblox_mutex: Option<platform::MutexGuard>,
     roblox_warning: bool,
     path: PathBuf,
@@ -106,6 +108,7 @@ impl Controller {
             login_pending: false,
             show_settings: false,
             settings: settings::Settings::default(),
+            cpu_cap_input: settings::Settings::default().background_cpu_percent,
             roblox_mutex: None,
             roblox_warning: false,
             path,
@@ -291,6 +294,7 @@ impl Controller {
                                 .find(|a| a.username.eq_ignore_ascii_case(&account.username))
                             {
                                 account.description = old.description.clone();
+                                account.background = old.background;
                                 *old = account;
                             } else {
                                 accounts.push(account);
@@ -379,11 +383,17 @@ impl Controller {
         };
         let sender = self.sender.clone();
         let repaint = ctx.clone();
+        let percent = self.settings.background_cpu_percent;
         self.work(ctx, "Requesting Roblox launches...", move || {
-            let message = join_batch(accounts, target, roblox::join, |message| {
-                let _ = sender.send(ResultEvent::Progress(message));
-                repaint.request_repaint();
-            });
+            let message = join_batch(
+                accounts,
+                target,
+                |account, target| roblox::join(account, target, percent),
+                |message| {
+                    let _ = sender.send(ResultEvent::Progress(message));
+                    repaint.request_repaint();
+                },
+            );
             Ok((None, message))
         });
     }
@@ -421,7 +431,12 @@ impl Controller {
                                 .split_whitespace()
                                 .collect::<Vec<_>>()
                                 .join(" ");
-                            let title = format!("{}  |  {note}", account.username);
+                            let mode = if account.background {
+                                " (background)"
+                            } else {
+                                ""
+                            };
+                            let title = format!("{}{mode}  |  {note}", account.username);
                             let row =
                                 egui::Button::selectable(self.selected.contains(&index), title)
                                     .truncate()
@@ -585,6 +600,18 @@ impl Controller {
         self.games_ui(ui);
         ui.add_space(8.0);
         ui.add_enabled_ui(count > 0, |ui| {
+            let marked = self.selected.iter().filter(|&&i| self.accounts[i].background).count();
+            let mut enabled = count > 0 && marked == count;
+            if ui.add(egui::Checkbox::new(&mut enabled, "Launch as background")
+                .indeterminate(marked > 0 && marked < count))
+                .on_hover_text(format!("Background clients share {}% of total CPU. Applies on next launch.", self.settings.background_cpu_percent))
+                .changed() {
+                let mut accounts = self.accounts.clone();
+                for &i in &self.selected {
+                    accounts[i].background = enabled;
+                }
+                self.save(ui.ctx(), accounts, "Launch preference saved.");
+            }
             ui.label("Player username");
             ui.add(
                 egui::TextEdit::singleline(&mut self.username)
@@ -632,7 +659,16 @@ impl Controller {
         } else {
             None
         };
-        next.save(&self.path.with_file_name("settings.json"))?;
+        let cap_changed = next.background_cpu_percent != self.settings.background_cpu_percent;
+        if cap_changed {
+            background::configure(next.background_cpu_percent)?;
+        }
+        if let Err(error) = next.save(&self.path.with_file_name("settings.json")) {
+            if cap_changed {
+                background::configure(self.settings.background_cpu_percent)?;
+            }
+            return Err(error);
+        }
         if !next.singleton {
             self.roblox_mutex = None;
         } else if new_mutex.is_some() {
@@ -657,15 +693,28 @@ impl Controller {
                 !self.busy && !self.login_pending,
                 egui::Checkbox::new(
                     &mut next.singleton,
-                    "Enable Roblox singleton (multiple clients)",
+                    "Enable Multiple Instances",
                 ),
             )
             .changed();
-        ui.small("Holds Roblox's singleton mutex to allow multiple clients. Enable before launching Roblox; changes may require closing existing Roblox clients.");
+        ui.small("Enable before launching Roblox. Changes may require closing existing Roblox clients and restarting PRAC");
         ui.add_space(12.0);
         let theme_changed = ui.checkbox(&mut next.dark_mode, "Dark mode").changed();
         ui.small("Turn off for light mode.");
-        if singleton_changed || theme_changed {
+        ui.add_space(12.0);
+        ui.label("Background CPU cap (Experimental)");
+        ui.add(egui::Slider::new(&mut self.cpu_cap_input, 1..=100).suffix("%"));
+        ui.small("All background accounts share this percentage of total CPU.");
+        let apply_cap = ui
+            .add_enabled(
+                !self.busy && self.cpu_cap_input != next.background_cpu_percent,
+                egui::Button::new("Apply CPU cap"),
+            )
+            .clicked();
+        if apply_cap {
+            next.background_cpu_percent = self.cpu_cap_input;
+        }
+        if singleton_changed || theme_changed || apply_cap {
             self.message = match self.apply_settings(ui.ctx(), next) {
                 Ok(()) => "Settings saved.".into(),
                 Err(error) => error,
@@ -673,6 +722,19 @@ impl Controller {
         }
         ui.add_space(16.0);
         ui.separator();
+        if ui
+            .add_enabled(
+                !self.busy && !self.login_pending,
+                egui::Button::new("Trim background RAM (Experimental)"),
+            )
+            .clicked()
+        {
+            self.work(ui.ctx(), "Trimming background RAM...", || {
+                background::trim_ram().map(|message| (None, message))
+            });
+        }
+        ui.small("One-time trim for running PRAC background clients. Active clients may briefly stutter as they reload memory.");
+        ui.add_space(16.0);
         ui.heading("Import accounts");
         ui.label("Choose a CSV file to import into your encrypted account store. Existing usernames will be skipped.");
         let can_import = !self.busy && !self.blocked && !self.login_pending;
@@ -839,6 +901,7 @@ fn run() -> Result<(), String> {
                 username: "SyntheticUser".into(),
                 cookie: "synthetic-cookie-never-sent".into(),
                 description: "<script>unsafe</script>\nTest note".into(),
+                background: false,
             }],
         )?;
         path
@@ -854,8 +917,17 @@ fn run() -> Result<(), String> {
     } else {
         (None, false)
     };
+    let icon =
+        image::load_from_memory_with_format(include_bytes!("../app.ico"), image::ImageFormat::Ico)
+            .map_err(|error| format!("Could not load the application icon: {error}"))?
+            .into_rgba8();
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
+            .with_icon(egui::IconData {
+                width: icon.width(),
+                height: icon.height(),
+                rgba: icon.into_raw(),
+            })
             .with_inner_size([1050.0, 780.0])
             .with_min_inner_size([320.0, 240.0])
             .with_visible(!smoke),
@@ -866,6 +938,8 @@ fn run() -> Result<(), String> {
         "Personal Roblox Account Controller",
         options,
         Box::new(move |cc| {
+            // Set both Windows icon sizes even when the controller starts in the background.
+            platform::set_window_icons(cc);
             if smoke {
                 println!("Smoke: native renderer initialized.");
             }
@@ -876,6 +950,7 @@ fn run() -> Result<(), String> {
             });
             let mut app = Controller::new(&cc.egui_ctx, path, smoke);
             app.settings = settings;
+            app.cpu_cap_input = settings.background_cpu_percent;
             app.roblox_mutex = roblox_mutex;
             app.roblox_warning = roblox_warning;
             Ok(Box::new(app))
@@ -903,6 +978,7 @@ mod tests {
                 username: "SyntheticUser".into(),
                 cookie: "secret-must-never-be-painted".into(),
                 description: "Long note ".repeat(100),
+                background: false,
             }],
         )
         .unwrap();
@@ -991,6 +1067,7 @@ mod tests {
                     username: format!("User{i}"),
                     cookie: "synthetic-only".into(),
                     description: format!("Note {i}"),
+                    background: false,
                 })
                 .collect(),
         );

@@ -6,6 +6,7 @@ use std::{io::Write, path::Path};
 pub struct Settings {
     pub singleton: bool,
     pub dark_mode: bool,
+    pub background_cpu_percent: u32,
 }
 
 impl Default for Settings {
@@ -13,6 +14,7 @@ impl Default for Settings {
         Self {
             singleton: true,
             dark_mode: true,
+            background_cpu_percent: 15,
         }
     }
 }
@@ -20,8 +22,10 @@ impl Default for Settings {
 impl Settings {
     pub fn load(path: &Path) -> Result<Self, String> {
         match std::fs::read(path) {
-            Ok(bytes) => serde_json::from_slice(&bytes)
-                .map_err(|_| "Settings file is invalid. It has not been overwritten.".into()),
+            Ok(bytes) => serde_json::from_slice::<Self>(&bytes)
+                .ok()
+                .filter(|s| (1..=100).contains(&s.background_cpu_percent))
+                .ok_or_else(|| "Settings file is invalid. It has not been overwritten.".into()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(_) => Err("Could not read settings.".into()),
         }
@@ -52,14 +56,18 @@ mod tests {
         let path = dir.path().join("settings.json");
         let defaults = Settings::load(&path).unwrap();
         assert!(defaults.singleton && defaults.dark_mode);
+        std::fs::write(&path, br#"{"dark_mode":false}"#).unwrap();
+        assert_eq!(Settings::load(&path).unwrap().background_cpu_percent, 15);
         Settings {
             singleton: false,
             dark_mode: false,
+            background_cpu_percent: 33,
         }
         .save(&path)
         .unwrap();
         let saved = Settings::load(&path).unwrap();
         assert!(!saved.singleton && !saved.dark_mode);
+        assert_eq!(saved.background_cpu_percent, 33);
         defaults.save(&path).unwrap();
         assert!(Settings::load(&path).unwrap().singleton);
         std::fs::write(&path, b"invalid").unwrap();
