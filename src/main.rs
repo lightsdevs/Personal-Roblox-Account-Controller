@@ -693,11 +693,11 @@ impl Controller {
                 !self.busy && !self.login_pending,
                 egui::Checkbox::new(
                     &mut next.singleton,
-                    "Enable Roblox singleton (multiple clients)",
+                    "Enable Multiple Instances",
                 ),
             )
             .changed();
-        ui.small("Holds Roblox's singleton mutex to allow multiple clients. Enable before launching Roblox; changes may require closing existing Roblox clients.");
+        ui.small("Enable before launching Roblox. Changes may require closing existing Roblox clients and restarting PRAC");
         ui.add_space(12.0);
         let theme_changed = ui.checkbox(&mut next.dark_mode, "Dark mode").changed();
         ui.small("Turn off for light mode.");
